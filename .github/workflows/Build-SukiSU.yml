@@ -387,14 +387,25 @@ jobs:
       - name: Apply patch_linux and replace Image
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
-          cd /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
-
+          # Переходим в папку AnyKernel3, где уже лежит наше ядро
+          cd $GITHUB_WORKSPACE/AnyKernel3
+          
+          # Скачиваем патчер прямо туда
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
           chmod +x patch_linux
+          
+          # Запускаем патчер для файла Image в этой папке
           ./patch_linux
-          rm -f Image
-          mv oImage Image
-          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
+          
+          # Заменяем оригинальное ядро пропатченным (oImage -> Image)
+          if [ -f oImage ]; then
+            rm -f Image
+            mv oImage Image
+            echo "KPM Patch applied successfully!"
+          else
+            echo "ERROR: oImage not found! Patching failed."
+            exit 1
+          fi
 
       # 下载 SUSFS 模块（CI）
       - name: Download Latest SUSFS Module from CI
