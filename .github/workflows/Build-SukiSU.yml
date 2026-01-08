@@ -46,7 +46,7 @@ on:
         type: choice
         description: "Android Version"
         required: true
-        default: android15
+        default: android14
         options:
           - android14
           - android15
@@ -70,9 +70,9 @@ on:
           - gki
       SUSFS_CI:
         type: boolean
-        description: "Use CI for SusFS? (Recommended)"
+        description: "Use module CI for SusFS?"
         required: true
-        default: true
+        default: false
       VFS:
         type: boolean
         description: "Enable VFS Hooks? (Magic Mount/Hide)"
@@ -82,7 +82,7 @@ on:
         type: boolean
         description: "Enable KPM?"
         required: true
-        default: true
+        default: false
       ZRAM:
         type: boolean
         description: "Enable Extra ZRAM?"
