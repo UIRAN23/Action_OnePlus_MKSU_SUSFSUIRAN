@@ -6,7 +6,7 @@ on:
         type: choice
         description: "Ветка (CPU)"
         required: true
-        default: sm8550
+        default: sm8650
         options:
           - sm7550
           - sm7675
@@ -20,7 +20,7 @@ on:
         type: choice
         description: "Конфигурационный файл"
         required: true
-        default: oneplus_ace2_pro_v
+        default: oneplus_13r
         options:
           - oneplus_nord_ce4_v
           - oneplus_ace_3v_v
@@ -51,7 +51,7 @@ on:
         type: choice
         description: "Кодовое имя процессора"
         required: true
-        default: kalama
+        default: pineapple
         options:
           - crow
           - waipio
@@ -63,7 +63,7 @@ on:
         type: choice
         description: "Версия Android ядра"
         required: true
-        default: android15
+        default: android14
         options:
           - android12
           - android13
@@ -74,7 +74,7 @@ on:
        type: choice
        description: "Версия ядра"
        required: true
-       default: "5.15"
+       default: "6.1"
        options:
          - "5.10"
          - "5.15"
@@ -93,17 +93,17 @@ on:
         type: boolean
         description: "Использовать CI для загрузки модуля SUSFS?"
         required: true
-        default: true
+        default: false
       VFS:
         type: boolean
         description: "Включить ручные хуки?"
         required: true
-        default: true
+        default: false
       KPM:
         type: boolean
         description: "Включить KPM?"
         required: true
-        default: true
+        default: false
       ZRAM:
         type: boolean
         description: "Добавить дополнительные алгоритмы ZRAM?"
