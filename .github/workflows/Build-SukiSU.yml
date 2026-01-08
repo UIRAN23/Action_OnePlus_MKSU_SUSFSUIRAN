@@ -135,12 +135,19 @@ jobs:
       - name: Force remove -dirty suffix
         run: |
           cd kernel_workspace/kernel_platform
-          sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
-          # Also fix in common folder to be sure
-          if [ -f "common/scripts/setlocalversion" ]; then
-             sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          fi
+          
+          # Исправление: убрали пробел в поиске (s/-dirty//g вместо s/ -dirty//g)
+          # Это гарантирует удаление суффикса, даже если перед ним нет пробела в коде.
+          sed -i 's/-dirty//g' common/scripts/setlocalversion
+          sed -i 's/-dirty//g' msm-kernel/scripts/setlocalversion
+          
+          # Дополнительная страховка: находим и патчим setlocalversion во всех подпапках
+          find . -name "setlocalversion" -exec sed -i 's/-dirty//g' {} +
+          
+          # Еще одна страховка: иногда "dirty" помечается плюсом (+). 
+          # Эта команда заставляет скрипт думать, что репозиторий чист.
+          sed -i 's/scm_version+=""/scm_version=""/' common/scripts/setlocalversion
+          sed -i 's/scm_version+=""/scm_version=""/' msm-kernel/scripts/setlocalversion
 
       - name: Add KernelSU-SukiSU Ultra
         run: |
