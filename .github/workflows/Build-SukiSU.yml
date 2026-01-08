@@ -24,7 +24,6 @@ on:
         options:
           - oneplus_13r
           - oneplus_12_v
-          - oneplus12_v
           - oneplus_13
           - oneplus_13t
           - oneplus_ace3_v
