@@ -35,7 +35,7 @@ on:
           - oneplus_ace2_pro_v
           - oneplus_ace3_v
           - oneplus_open_v
-          - oneplus12_v
+          - oneplus_12_v
           - oneplus_13r
           - oneplus_ace3_pro_v
           - oneplus_ace5
@@ -96,7 +96,7 @@ on:
         default: false
       VFS:
         type: boolean
-        description: "Включить ручные хуки?"
+        description: "Включить ручные хуки (Отключает Auto Mount)?"
         required: true
         default: false
       KPM:
@@ -134,20 +134,7 @@ jobs:
       - name: Установка зависимостей
         run: |
           sudo apt update && sudo apt upgrade -y
-          sudo apt install -y python3 git curl
-
-      - name: Показать отладочную информацию о выбранных параметрах
-        run: |
-          echo "Выбранный CPU: ${{ github.event.inputs.CPU }}"
-          echo "Выбранный FEIL: ${{ github.event.inputs.FEIL }}"
-          echo "Выбранный CPUD: ${{ github.event.inputs.CPUD }}"
-          echo "Выбранная ANDROID_VERSION: ${{ github.event.inputs.ANDROID_VERSION }}"
-          echo "Выбранная KERNEL_VERSION: ${{ github.event.inputs.KERNEL_VERSION }}"
-          echo "Выбранный BUILD_METHOD: ${{ github.event.inputs.BUILD_METHOD }}"
-          echo "Выбран SUSFS_CI: ${{ github.event.inputs.SUSFS_CI }}"
-          echo "Выбран ZRAM: ${{ github.event.inputs.ZRAM }}"
-          echo "Выбран VFS: ${{ github.event.inputs.VFS }}"
-          echo "Выбран KPM: ${{ github.event.inputs.KPM }}"
+          sudo apt install -y python3 git curl jq wget
 
       - name: Установка инструмента repo
         run: |
@@ -160,27 +147,22 @@ jobs:
           mkdir kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
           repo sync
-          if [  -e kernel_platform/common/BUILD.bazel ]; then
-          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/common/BUILD.bazel
+          # Удаление защищенных экспортов (фикс ABI)
+          find kernel_platform -name "abi_gki_protected_exports_*" -delete
+          if [ -e kernel_platform/common/BUILD.bazel ]; then
+            sed -i '/"protected_exports_list"/d' kernel_platform/common/BUILD.bazel
           fi
-          if [  -e kernel_platform/msm-kernel/BUILD.bazel ]; then
-          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/msm-kernel/BUILD.bazel
+          if [ -e kernel_platform/msm-kernel/BUILD.bazel ]; then
+            sed -i '/"protected_exports_list"/d' kernel_platform/msm-kernel/BUILD.bazel
           fi
-          rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "Нет защищенных экспортов!"
-          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "Нет защищенных экспортов!"
 
-      # Удаление суффикса -dirty
       - name: Принудительное удаление суффикса -dirty
         run: |
           cd kernel_workspace/kernel_platform
-          sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
-          sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
-          sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
+          find . -name "setlocalversion" | xargs sed -i 's/ -dirty//g'
           git add -A
-          git commit -m "Force remove -dirty suffix from kernel version"
+          git commit -m "Force remove -dirty" || true
 
-      # Добавление SukiSU Ultra
       - name: Добавление KernelSU-SukiSU Ultra
         run: |
           cd kernel_workspace/kernel_platform
@@ -188,255 +170,144 @@ jobs:
           cd ./KernelSU
           KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10606)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
-          export KSU_VERSION=$KSU_VERSION
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      - name: Применение патчей SukiSU Ultra
+      - name: Применение патчей (SUSFS, ZRAM, KPM Support)
         run: |
           cd kernel_workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
-          cd kernel_platform
-          echo "Применение патча susfs к ядру"
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
-          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-
-          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-          echo "Применение патча zram к ядру"
-          cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux
-          cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib
-          cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto
-          cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
-          fi
-
-          cd ./common
+          cd kernel_platform/common
+          
+          # SUSFS Patch
+          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
-          echo "Готово"
+          cp ../../susfs4ksu/kernel_patches/fs/* ./fs/
+          cp ../../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
 
-      - name: Применение патчей для скрытия
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/69_hide_stuff.patch ./
-          echo "Применение патча скрытия приложений"
-          patch -p1 -F 3 < 69_hide_stuff.patch
-
-      - name: Применение LZ4KD
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-            cp ../../SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs.KERNEL_VERSION }}/lz4kd.patch ./
-            echo "Применение патча lz4kd"
-            patch -p1 -F 3 < lz4kd.patch || true
-            echo 'Патч LZ4KD применен'
+          # KPM Support (Patching code to recognize KPM)
+          if [ "${{ github.event.inputs.KPM }}" = "true" ]; then
+             echo "Добавление поддержки KPM в исходники"
+             # Обычно KPM требует флага в Makefile или заголовках, если не работает из дефконфига
+             sed -i '/obj-$(CONFIG_KSU)/a obj-$(CONFIG_KPM) += kpm/' ../KernelSU/kernel/Makefile || true
           fi
 
-      # Информация о конфигурации
-      - name: Добавление настроек конфигурации
+          # ZRAM LZ4K/LZ4KD Patch
+          if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
+            echo "Применение патча ZRAM LZ4KD"
+            cp -r ../../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
+            cp -r ../../SukiSU_patch/other/zram/lz4k/lib/* ./lib/
+            cp -r ../../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto/
+            cp -r ../../SukiSU_patch/other/zram/lz4k_oplus ./lib/
+            
+            # Patch LZ4KD
+            cp ../../SukiSU_patch/other/zram/zram_patch/${{ github.event.inputs.KERNEL_VERSION }}/lz4kd.patch ./
+            patch -p1 -F 3 < lz4kd.patch || true
+          fi
+
+      - name: Настройка конфигурации (Fix ZRAM & KPM)
         run: |
           cd kernel_workspace/kernel_platform
           CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
-          KERNEL_VERSION="${{ github.event.inputs.KERNEL_VERSION }}"
+          
+          # Базовый SukiSU
+          echo "CONFIG_KSU=y" >> $CONFIG_FILE
+          echo "CONFIG_KPM=y" >> $CONFIG_FILE
+          
+          # SUSFS
+          {
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+          } >> $CONFIG_FILE
 
-          # SukiSU Ultra config
-          echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
+          if [ "${{ github.event.inputs.VFS }}" = "true" ]; then
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=n" >> $CONFIG_FILE
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=n" >> $CONFIG_FILE
+          else
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $CONFIG_FILE
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $CONFIG_FILE
+          fi
 
-          # SUSFS config
-          echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
-
-          # Remove check_defconfig
-          sed -i 's/check_defconfig//' ./common/build.config.gki
-
-          # LZ4KD конфигурация
+          # Fix ZRAM (Заставляем собираться встроенно, а не модулем)
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
-          CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
-
-            if [ "${{ github.event.inputs.KERNEL_VERSION }}" = "5.10" ]; then
-              echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
-              echo "CONFIG_ZRAM=y" >> "$CONFIG_FILE"
-              echo "CONFIG_MODULE_SIG=n" >> "$CONFIG_FILE"
-              echo "CONFIG_CRYPTO_LZO=y" >> "$CONFIG_FILE"
-              echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y" >> "$CONFIG_FILE"
-            fi
-
-            if [ "${{ github.event.inputs.KERNEL_VERSION }}" != "6.6" ] && [ "${{ github.event.inputs.KERNEL_VERSION }}" != "6.12" ] && [ "${{ github.event.inputs.KERNEL_VERSION }}" != "5.10" ]; then
-              if grep -q "CONFIG_ZSMALLOC" -- "$CONFIG_FILE"; then
-                sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$CONFIG_FILE"
-              else
-                echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
-              fi
-              sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
-            fi
-
-            if [ "${{ github.event.inputs.KERNEL_VERSION }}" = "6.6" ] || [ "${{ github.event.inputs.KERNEL_VERSION }}" = "6.12" ]; then
-              echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
-              sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
-            fi
-
-            if [ "${{ github.event.inputs.ANDROID_VERSION }}" = "android14" ] || [ "${{ github.event.inputs.ANDROID_VERSION }}" = "android15" ] || [ "${{ github.event.inputs.ANDROID_VERSION }}" = "android16" ]; then
-              if [  -e ./common/modules.bzl ]; then
-                sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./common/modules.bzl"
-              fi
-
-              if [  -e ./msm-kernel/modules.bzl ]; then
-                sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./msm-kernel/modules.bzl"
-                echo "CONFIG_ZSMALLOC=y" >> "msm-kernel/arch/arm64/configs/${{ github.event.inputs.CPUD }}-GKI.config"
-                echo "CONFIG_ZRAM=y" >> "msm-kernel/arch/arm64/configs/${{ github.event.inputs.CPUD }}-GKI.config"
-              fi
-              
-              echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
-            elif [ "${{ github.event.inputs.KERNEL_VERSION }}" = "5.10" ] || [ "${{ github.event.inputs.KERNEL_VERSION }}" = "5.15" ]; then
-              rm "common/android/gki_aarch64_modules"
-              touch "common/android/gki_aarch64_modules"
-            fi
-
-            if grep -q "CONFIG_ZSMALLOC=y" "$CONFIG_FILE" && grep -q "CONFIG_ZRAM=y" "$CONFIG_FILE"; then
-              echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
-              echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
-              echo "CONFIG_CRYPTO_LZ4KD=y" >> "$CONFIG_FILE"
-              echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
-              echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
-            fi
+            sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' $CONFIG_FILE
+            sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' $CONFIG_FILE
+            {
+              echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y"
+              echo "CONFIG_CRYPTO_LZ4K=y"
+              echo "CONFIG_CRYPTO_LZ4KD=y"
+              echo "CONFIG_ZRAM_WRITEBACK=y"
+            } >> $CONFIG_FILE
+            
+            # Отключаем модули ZRAM в Bazel, чтобы они не перезаписывали встроенный ZRAM
+            find . -name "modules.bzl" -exec sed -i 's/"drivers\/block\/zram\/zram\.ko",//g' {} +
+            find . -name "modules.bzl" -exec sed -i 's/"mm\/zsmalloc\.ko",//g' {} +
           fi
 
       - name: Сборка ядра
-        if: ${{ github.event.inputs.CPU == 'sm8650' || github.event.inputs.CPU == 'sm7675' }}
         run: |
           cd kernel_workspace
-          ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
-          
-      - name: Резервная сборка ядра
-        if: ${{ github.event.inputs.CPU != 'sm8650' && github.event.inputs.CPU != 'sm7675' }}
-        run: |
-         cd kernel_workspace
-         LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+          if [ "${{ github.event.inputs.CPU }}" = "sm8650" ] || [ "${{ github.event.inputs.CPU }}" = 'sm7675' ]; then
+            ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+          else
+            LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+          fi
 
-      - name: Создание AnyKernel3
+      - name: Подготовка AnyKernel3 и поиск Image
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
-
-          dir1="kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
-          dir2="kernel_workspace/kernel_platform/bazel-out/k8-fastbuild/bin/msm-kernel/${{ github.event.inputs.CPUD }}_gki_kbuild_mixed_tree/"
-          dir3="kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist/"
-          dir4="kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
-          dir5="kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/gki_kernel/common/arch/arm64/boot/"
-          target1="./AnyKernel3/"
-          target2="./kernel_workspace/kernel"
-
-          # Поиск Image файла
-          if find "$dir1" -name "Image" | grep -q "Image"; then
-            image_path="$dir1"Image
-          elif find "$dir2" -name "Image" | grep -q "Image"; then
-            image_path="$dir2"Image
-          elif find "$dir3" -name "Image" | grep -q "Image"; then
-            image_path="$dir3"Image
-          elif find "$dir4" -name "Image" | grep -q "Image"; then
-            image_path="$dir4"Image
-          elif find "$dir5" -name "Image" | grep -q "Image"; then
-            image_path="$dir5"Image
-          else
-            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
+          
+          # Улучшенный поиск Image
+          IMAGE_FILE=$(find kernel_workspace/kernel_platform/out -name "Image" -type f | head -n 1)
+          if [ -z "$IMAGE_FILE" ]; then
+            IMAGE_FILE=$(find kernel_workspace/kernel_platform/bazel-out -name "Image" -type f | head -n 1)
           fi
-
-          # Копирование Image
-          if [ -n "$image_path" ] && [ -f "$image_path" ]; then
-            mkdir -p "$dir1"
-            if [ "$(realpath "$image_path")" != "$(realpath "$dir1"Image)" ]; then
-              cp "$image_path" "$dir1"
-            else
-              echo "Исходный файл совпадает с целевым, копирование пропущено"
-            fi
-            cp "$dir1"Image ./AnyKernel3/Image
+          
+          if [ -f "$IMAGE_FILE" ]; then
+            cp "$IMAGE_FILE" ./AnyKernel3/Image
+            echo "IMAGE_FOUND_PATH=$IMAGE_FILE" >> $GITHUB_ENV
           else
-            echo "Файл Image не найден, сборка может завершиться ошибкой"
+            echo "Ошибка: Image не найден!"
             exit 1
           fi
 
-          # Опциональное копирование других файлов (если существуют)
-          if [ "${{ github.event.inputs.CPU }}" = "sm8750" ] || [ "${{ github.event.inputs.CPU }}" = "sm8850" ]; then
-          for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
-            if [ -f "$dir1$file" ]; then
-              target_name="$file"
-              # Специальная обработка для system_dlkm.erofs.img
-              if [ "$file" = "system_dlkm.erofs.img" ]; then
-                target_name="system_dlkm.img"
-              fi
-              cp "$dir1$file" "./AnyKernel3/$target_name"
-            else
-              echo "$file не существует, копирование пропущено"
-            fi
-          done
-          fi
-
-      - name: Применение patch_linux и замена Image
+      - name: Применение KPM Patch_linux
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
-          cd /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
-
+          cd AnyKernel3
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
           chmod +x patch_linux
-          ./patch_linux
-          rm -f Image
-          mv oImage Image
-          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
-
-      # Загрузка SUSFS модуля (CI)
-      - name: Загрузка последнего модуля SUSFS из CI
-        if: ${{ github.event.inputs.SUSFS_CI == 'true' }}
-        run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "Не найден успешный запуск для ветки v1.5.2+"
-            exit 1
+          # Пропатчим Image прямо в AnyKernel3
+          ./patch_linux || { echo "KPM Patch failed"; exit 1; }
+          if [ -f "oImage" ]; then
+            mv oImage Image
+            echo "KPM успешно применен к Image"
           fi
 
-          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-
-          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
-          cp ksu_module_susfs.zip ./AnyKernel3/
-
-      # Загрузка SUSFS модуля (Release)
-      - name: Загрузка последнего модуля SUSFS из релизов
-        if: ${{ github.event.inputs.SUSFS_CI == 'false' }}
+      - name: Загрузка модуля SUSFS
         run: |
-          wget https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
-          cp ksu_module_susfs_1.5.2+.zip ./AnyKernel3/
+          cd AnyKernel3
+          if [ "${{ github.event.inputs.SUSFS_CI }}" = "true" ]; then
+            LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+              jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+            curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
+          else
+            wget https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip -O ksu_module_susfs.zip
+          fi
 
-      - name: Установка суффикса
-        id: suffix
-        run: |
-          echo "value=${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.VFS == 'true' && '_VFS' || '' }}${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}" >> $GITHUB_OUTPUT
-
-      - name: Удаление суффикса _uv из FEIL
-        id: feil_clean
-        run: |
-          clean_feil="${{ github.event.inputs.FEIL }}"
-          clean_feil="${clean_feil%_v}"  # Удаление _v с конца (если есть)
-          clean_feil="${clean_feil%_u}"  # Удаление _u с конца (если есть)
-          echo "value=$clean_feil" >> $GITHUB_OUTPUT
-
-      - name: Загрузка AnyKernel3
+      - name: Загрузка артефакта
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ steps.feil_clean.outputs.value }}${{ steps.suffix.outputs.value }}
+          name: AnyKernel3_SukiSUUltra_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}${{ github.event.inputs.KPM == 'true' && '_KPM' || '' }}${{ github.event.inputs.ZRAM == 'true' && '_LZ4KD' || '' }}
           path: ./AnyKernel3/*
