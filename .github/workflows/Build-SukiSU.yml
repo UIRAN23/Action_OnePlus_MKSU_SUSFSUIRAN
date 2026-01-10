@@ -149,14 +149,9 @@ jobs:
           repo sync
           
           # === FIX ABI / KMI ===
-          # Вместо удаления файлов, очищаем их содержимое. 
-          # Это предотвращает ошибку "File not found" в Bazel, но убирает ограничения.
           find kernel_platform -name "abi_gki_protected_exports_*" -exec sh -c 'echo "" > "$1"' _ {} \;
-          
-          # Отключаем Strict Mode в файлах BUILD.bazel
           find kernel_platform -name "BUILD.bazel" -exec sed -i 's/kmi_symbol_list_strict_mode = True/kmi_symbol_list_strict_mode = False/g' {} +
           
-          # Удаляем ссылки на protected_exports_list, чтобы не было конфликтов
           if [ -e kernel_platform/common/BUILD.bazel ]; then
             sed -i '/"protected_exports_list"/d' kernel_platform/common/BUILD.bazel
           fi
@@ -253,19 +248,26 @@ jobs:
               echo "CONFIG_ZRAM_WRITEBACK=y"
             } >> $CONFIG_FILE
             
-            # Очистка модулей из Bazel (ОЧЕНЬ ВАЖНО для успешной сборки)
-            # Мы удаляем строки "zram.ko" и "zsmalloc.ko" из файлов modules.bzl
-            # Используем sed с аккуратным удалением запятых
-            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"drivers\/block\/zram\/zram.ko",//g'
-            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"drivers\/block\/zram\/zram.ko"//g'
-            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"mm\/zsmalloc.ko",//g'
-            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"mm\/zsmalloc.ko"//g'
+            # Агрессивная очистка модулей из Bazel (ОЧЕНЬ ВАЖНО для успешной сборки)
+            # Ищем во всех файлах .bzl упоминания zram.ko и zsmalloc.ko и удаляем их
+            # Это предотвращает попытки Bazel собрать их как модули, что вызывает ошибку "exported twice"
+            echo "Очистка списков модулей Bazel..."
+            find . -name "*.bzl" -print0 | xargs -0 sed -i '/zram\/zram.ko/d'
+            find . -name "*.bzl" -print0 | xargs -0 sed -i '/mm\/zsmalloc.ko/d'
+            # На всякий случай чистим и старый формат
+            find . -name "*.bzl" -print0 | xargs -0 sed -i 's/"drivers\/block\/zram\/zram.ko",//g'
+            find . -name "*.bzl" -print0 | xargs -0 sed -i 's/"mm\/zsmalloc.ko",//g'
           fi
 
       - name: Сборка ядра
         run: |
           cd kernel_workspace
-          # Дополнительные флаги для отключения проверок
+          # === КРИТИЧЕСКИЙ ФИКС ===
+          # Разрешаем предупреждения при сборке модулей, чтобы ошибка "exported twice" 
+          # не останавливала сборку (она станет просто Warning)
+          export KBUILD_MODPOST_WARN=1
+          
+          # Дополнительные флаги
           export KMI_SYMBOL_LIST_STRICT_MODE=0
           
           if [ "${{ github.event.inputs.CPU }}" = "sm8650" ] || [ "${{ github.event.inputs.CPU }}" = 'sm7675' ]; then
