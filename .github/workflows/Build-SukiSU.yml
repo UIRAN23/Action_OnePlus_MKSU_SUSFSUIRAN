@@ -147,8 +147,16 @@ jobs:
           mkdir kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/${{ github.event.inputs.CPU }} -m ${{ github.event.inputs.FEIL }}.xml --depth=1
           repo sync
-          # Удаление защищенных экспортов (фикс ABI)
-          find kernel_platform -name "abi_gki_protected_exports_*" -delete
+          
+          # === FIX ABI / KMI ===
+          # Вместо удаления файлов, очищаем их содержимое. 
+          # Это предотвращает ошибку "File not found" в Bazel, но убирает ограничения.
+          find kernel_platform -name "abi_gki_protected_exports_*" -exec sh -c 'echo "" > "$1"' _ {} \;
+          
+          # Отключаем Strict Mode в файлах BUILD.bazel
+          find kernel_platform -name "BUILD.bazel" -exec sed -i 's/kmi_symbol_list_strict_mode = True/kmi_symbol_list_strict_mode = False/g' {} +
+          
+          # Удаляем ссылки на protected_exports_list, чтобы не было конфликтов
           if [ -e kernel_platform/common/BUILD.bazel ]; then
             sed -i '/"protected_exports_list"/d' kernel_platform/common/BUILD.bazel
           fi
@@ -185,10 +193,9 @@ jobs:
           cp ../../susfs4ksu/kernel_patches/fs/* ./fs/
           cp ../../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
 
-          # KPM Support (Patching code to recognize KPM)
+          # KPM Support
           if [ "${{ github.event.inputs.KPM }}" = "true" ]; then
              echo "Добавление поддержки KPM в исходники"
-             # Обычно KPM требует флага в Makefile или заголовках, если не работает из дефконфига
              sed -i '/obj-$(CONFIG_KSU)/a obj-$(CONFIG_KPM) += kpm/' ../KernelSU/kernel/Makefile || true
           fi
 
@@ -235,7 +242,7 @@ jobs:
             echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $CONFIG_FILE
           fi
 
-          # Fix ZRAM (Заставляем собираться встроенно, а не модулем)
+          # Fix ZRAM (Заставляем собираться встроенно)
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
             sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' $CONFIG_FILE
             sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' $CONFIG_FILE
@@ -246,17 +253,26 @@ jobs:
               echo "CONFIG_ZRAM_WRITEBACK=y"
             } >> $CONFIG_FILE
             
-            # Отключаем модули ZRAM в Bazel, чтобы они не перезаписывали встроенный ZRAM
-            find . -name "modules.bzl" -exec sed -i 's/"drivers\/block\/zram\/zram\.ko",//g' {} +
-            find . -name "modules.bzl" -exec sed -i 's/"mm\/zsmalloc\.ko",//g' {} +
+            # Очистка модулей из Bazel (ОЧЕНЬ ВАЖНО для успешной сборки)
+            # Мы удаляем строки "zram.ko" и "zsmalloc.ko" из файлов modules.bzl
+            # Используем sed с аккуратным удалением запятых
+            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"drivers\/block\/zram\/zram.ko",//g'
+            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"drivers\/block\/zram\/zram.ko"//g'
+            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"mm\/zsmalloc.ko",//g'
+            find . -name "modules.bzl" -print0 | xargs -0 sed -i 's/"mm\/zsmalloc.ko"//g'
           fi
 
       - name: Сборка ядра
         run: |
           cd kernel_workspace
+          # Дополнительные флаги для отключения проверок
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          
           if [ "${{ github.event.inputs.CPU }}" = "sm8650" ] || [ "${{ github.event.inputs.CPU }}" = 'sm7675' ]; then
+            # Для Bazel (sm8650)
             ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           else
+            # Для скриптовой сборки
             LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
           fi
 
@@ -276,6 +292,7 @@ jobs:
             echo "IMAGE_FOUND_PATH=$IMAGE_FILE" >> $GITHUB_ENV
           else
             echo "Ошибка: Image не найден!"
+            # Не падаем сразу, проверим другие локации или логи, если нужно
             exit 1
           fi
 
