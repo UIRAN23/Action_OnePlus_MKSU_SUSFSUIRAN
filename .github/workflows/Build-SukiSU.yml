@@ -104,6 +104,12 @@ on:
         description: "Включить KPM?"
         required: true
         default: false
+      ZRAM:
+        type: boolean
+        description: "Не выбирайте это"
+        required: true
+        default: false
+
 
 jobs:
   build:
