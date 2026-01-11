@@ -104,11 +104,6 @@ on:
         description: "Включить KPM?"
         required: true
         default: false
-      ZRAM:
-        type: boolean
-        description: "Добавить дополнительные алгоритмы ZRAM?"
-        required: true
-        default: false
 
 jobs:
   build:
@@ -393,14 +388,12 @@ jobs:
       - name: Применение patch_linux и замена Image
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
-          cd /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
-
+          cd $GITHUB_WORKSPACE/AnyKernel3
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
           chmod +x patch_linux
           ./patch_linux
           rm -f Image
           mv oImage Image
-          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
 
       # Загрузка SUSFS модуля (CI)
       - name: Загрузка последнего модуля SUSFS из CI
